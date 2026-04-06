@@ -23,6 +23,7 @@ Parse `$ARGUMENTS` to determine which subcommand to run:
 | `rollback` | Restore to last checkpoint |
 | `status` | Show pipeline status + recent history |
 | `config` | Interactive config editing |
+| `learn` | Review and approve/reject learned patterns as review standards |
 
 ## Phase 2: Post-Work Pipeline (`/flow` or `/flow post`)
 
@@ -195,6 +196,34 @@ Run the individual stage only, following the same logic as above but without the
 ## `/flow config`
 
 Interactive editing of `.claude-workflow/config.json`. Ask the user what they want to change and update accordingly.
+
+## `/flow learn`
+
+Review learned patterns and approve/reject them as review standards.
+
+1. Run `node ${CLAUDE_PLUGIN_ROOT}/lib/pattern-tracker.mjs candidates` to get candidate patterns
+2. If no candidates, check suggestions: `node ${CLAUDE_PLUGIN_ROOT}/lib/pattern-tracker.mjs status`
+3. Present each candidate to the user:
+```
+## Learned Pattern Candidates
+
+1. **Error Handling — Empty catch block**
+   - Found: 7 times | Accepted: 5 (71%) | Fix success: 4 (80%)
+   - Confidence: 0.71
+   - Example: src/api/users.ts:42 — catch block ignores error
+   → approve / reject / skip
+```
+4. For each user choice:
+   - **approve**: Pattern is added to `.claude-workflow/standards/learned.md`
+   - **reject**: Pattern is deleted from storage
+   - **skip**: Pattern stays for future review
+5. After processing, run cleanup: `node ${CLAUDE_PLUGIN_ROOT}/lib/pattern-tracker.mjs clean`
+
+### Pattern Recording (integrated into pipeline)
+
+After **Review** stage: record each discovered issue via pattern-tracker.
+After **Confirm** stage: record user response (accepted for proceed/select, rejected for skip).
+After **Fix** stage: record fix results (success if issue resolved, failed if same error persists).
 
 ## Important Rules
 

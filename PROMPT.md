@@ -511,6 +511,120 @@ git checkout -b workflow-backup-{timestamp}
 
 `/flow status` — 현재 실행 상태 + 최근 실행 히스토리 요약.
 
+## 자기개선 (Pattern Learning)
+
+파이프라인 실행마다 **"어떤 이슈가 반복되는가" + "사용자가 어떻게 반응했는가"**를 추적.
+반복 검증된 패턴만 리뷰 기준에 반영. 자동 반영이 아닌 **사용자 승인 후 반영**.
+
+### 학습 흐름
+
+```
+[파이프라인 실행]
+    ↓
+[리뷰어 이슈 발견]
+    ↓
+[사용자 선택] proceed / skip / abort
+    ↓ (이 선택이 핵심 학습 데이터)
+[패턴 수집기]
+    - 이슈 카테고리 + 파일 패턴
+    - 사용자 반응: accepted / rejected / fixed
+    ↓
+[패턴 저장소] .claude-workflow/patterns.json
+    ↓
+[주기적 정리] 30일 미발견 패턴 자동 삭제
+    ↓
+[기준 반영] /flow learn → 사용자 승인 후 learned.md에 추가
+```
+
+### 패턴 저장소 스키마
+
+```json
+{
+  "empty-catch": {
+    "category": "에러 처리",
+    "filePattern": "src/**/*.ts",
+    "occurrences": 7,
+    "accepted": 5,
+    "rejected": 2,
+    "fixSuccess": 4,
+    "fixFailed": 1,
+    "confidence": 0.71,
+    "status": "suggest",
+    "firstSeen": "2026-04-06",
+    "lastSeen": "2026-04-07",
+    "example": "src/api/users.ts:42 — catch 블록에서 에러 무시"
+  }
+}
+```
+
+### Confidence 계산
+
+```
+confidence = (accepted / occurrences) × (fixSuccess / max(accepted, 1))
+```
+
+- `accepted / occurrences` — 사용자가 이 이슈를 실제 문제로 인정한 비율
+- `fixSuccess / accepted` — 수정이 실제로 성공한 비율
+- 둘 다 높아야 confidence가 올라감
+
+### 3단계 성숙도
+
+| 단계 | confidence | 동작 |
+|------|-----------|------|
+| **관찰** | 0.0 ~ 0.6 | 패턴만 기록, 리뷰에 영향 없음 |
+| **제안** | 0.6 ~ 0.9 | 리뷰 시 "이전에도 발견된 패턴입니다" 표시 |
+| **기준 후보** | 0.9+ | `/flow learn`에서 기준 추가 후보로 제시 |
+
+**자동으로 기준에 반영되지 않음.** 반드시 `/flow learn`에서 사용자가 확인하고 승인해야 `learned.md`에 추가.
+
+### `/flow learn` 스킬
+
+```
+/flow learn 실행 시:
+  1. patterns.json에서 confidence 0.9+ 패턴 목록 제시
+  2. 각 패턴의 발견 횟수, 승인률, 수정 성공률 표시
+  3. 사용자가 선택: approve (기준 추가) / reject (패턴 삭제) / skip (보류)
+  4. 승인된 패턴 → .claude-workflow/standards/learned.md에 추가
+  5. 거부된 패턴 → patterns.json에서 삭제
+```
+
+### 학습 데이터 수집 지점
+
+| 지점 | 수집 데이터 |
+|------|-----------|
+| Review 완료 후 | 이슈 카테고리, 파일 패턴, severity, confidence |
+| Confirm 사용자 선택 | accepted (proceed/select) vs rejected (skip) |
+| Fix 완료 후 | fixSuccess (수정 성공) vs fixFailed (동일 에러 재발) |
+| `/flow learn` | 사용자의 최종 승인/거부 |
+
+### 정리 규칙
+
+- **30일 미발견**: 패턴 자동 삭제 (프로젝트가 개선되어 더 이상 발생하지 않는 이슈)
+- **confidence 0.3 미만 + 5회 이상 발견**: 거짓 양성으로 판단, 자동 삭제
+- **patterns.json 최대 100개**: 오래된 낮은 confidence 패턴부터 삭제
+
+### learned.md 형식
+
+```markdown
+# Learned Review Standards
+
+> 이 파일은 /flow learn에서 승인된 패턴으로 자동 생성됩니다.
+> 수동 편집 가능. 삭제하면 해당 기준이 제거됩니다.
+
+## 에러 처리
+- catch 블록에서 에러를 무시하지 않는다. 최소한 logger.error() 필수.
+  (근거: 7회 발견, 승인률 71%, 수정 성공률 80%)
+
+## DB 쿼리
+- 루프 내 DB 쿼리 금지. batch/join 사용.
+  (근거: 4회 발견, 승인률 100%, 수정 성공률 100%)
+```
+
+리뷰어는 기존 기준 참조 순서에 learned.md를 추가:
+1. 프로젝트 기준 (`.claude-workflow/standards/*.md`)
+2. **학습된 기준 (`.claude-workflow/standards/learned.md`)**
+3. 플러그인 내장 기준 (`standards/*.md`)
+
 ## 에이전트
 
 ### 에이전트 목록
@@ -589,6 +703,7 @@ tools: [Glob, Grep, Read, Bash]
 | `/flow rollback` | — | 마지막 파이프라인 실행 전 상태로 복원 |
 | `/flow status` | — | 현재 파이프라인 진행 상태 + 최근 실행 히스토리 |
 | `/flow config` | — | 설정 대화형 수정 |
+| `/flow learn` | — | 학습된 패턴 검토 → 승인/거부 → learned.md 반영 |
 
 ### `/flow` 오케스트레이션 구조
 
@@ -775,7 +890,8 @@ workflow-plugin/
 │   ├── verify-deliverables.mjs  ← 서브에이전트 산출물 검증
 │   ├── session-init.mjs         ← 세션 초기화
 │   ├── rollback.mjs             ← 롤백 체크포인트 관리
-│   └── logger.mjs               ← 실행 로그 기록
+│   ├── logger.mjs               ← 실행 로그 기록
+│   └── pattern-tracker.mjs      ← 패턴 학습 (자기개선)
 ├── standards/
 │   ├── docs.md                  ← 문서 리뷰 내장 기준
 │   ├── frontend.md              ← 프론트엔드 리뷰 내장 기준
