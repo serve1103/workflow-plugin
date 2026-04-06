@@ -1,0 +1,33 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "workflow-plugin",
+  "description": "Automated end-to-end development pipeline — review, fix, verify, commit",
+  "owner": {
+    "name": "serve1103"
+  },
+  "plugins": [
+    {
+      "name": "workflow-plugin",
+      "description": "Automated end-to-end development pipeline for Claude Code — from prompt to commit. 5 domain reviewers, Human-in-the-Loop, pipeline scaling, rollback.",
+      "version": "0.1.0",
+      "author": {
+        "name": "serve1103"
+      },
+      "source": "./",
+      "category": "workflow",
+      "homepage": "https://github.com/serve1103/workflow-plugin",
+      "repository": "https://github.com/serve1103/workflow-plugin",
+      "license": "MIT",
+      "tags": [
+        "workflow",
+        "pipeline",
+        "code-review",
+        "auto-fix",
+        "verify",
+        "commit",
+        "human-in-the-loop"
+      ]
+    }
+  ],
+  "version": "0.1.0"
+}
