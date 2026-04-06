@@ -1,0 +1,94 @@
+{
+  "project": {
+    "type": "git-repo",
+    "language": null,
+    "packageManager": null,
+    "testRunner": null,
+    "linter": null,
+    "buildCommand": null,
+    "testCommand": null,
+    "platform": "github",
+    "baseBranch": "main",
+    "monorepo": null
+  },
+  "pipeline": {
+    "pre": {
+      "autoContext": false,
+      "enhance": true
+    },
+    "post": [
+      "review",
+      "confirm",
+      "fix",
+      "verify",
+      "commit"
+    ],
+    "preset": "auto",
+    "scaling": {
+      "trivialThreshold": 3,
+      "largeThreshold": 10
+    },
+    "overrides": {}
+  },
+  "enhance": {
+    "mode": "confirm",
+    "injectProjectStructure": true,
+    "injectRules": true,
+    "injectRecentChanges": 5
+  },
+  "trigger": {
+    "autoPostWork": false,
+    "ignorePatterns": [
+      "*.lock",
+      "node_modules/**",
+      "dist/**"
+    ]
+  },
+  "review": {
+    "parallelReviewers": true,
+    "confidenceThreshold": 80,
+    "autoMode": false,
+    "maxFixRounds": 3,
+    "maxVerifyRetries": 2,
+    "circuitBreakerThreshold": 3,
+    "autoFixSeverity": [
+      "HIGH",
+      "MEDIUM"
+    ],
+    "blockSeverity": [
+      "CRITICAL"
+    ],
+    "reportSeverity": [
+      "LOW"
+    ],
+    "reviewerMapping": {
+      "docs/**/*": "docs",
+      "*.md": "docs",
+      "src/components/**/*": "frontend",
+      "*.tsx": "frontend",
+      "*.jsx": "frontend",
+      "*.vue": "frontend",
+      "*.css": "frontend",
+      "*.scss": "frontend",
+      "src/api/**/*": "backend",
+      "src/services/**/*": "backend",
+      "src/routes/**/*": "backend",
+      "migrations/**/*": "data",
+      "*.sql": "data",
+      "prisma/**/*": "data",
+      "src/auth/**/*": "security",
+      "src/crypto/**/*": "security"
+    },
+    "defaultReviewer": "backend"
+  },
+  "commit": {
+    "style": "conventional",
+    "generateSummaryReport": true,
+    "autoPush": false,
+    "autoCreatePR": false
+  },
+  "rollback": {
+    "strategy": "stash",
+    "autoCleanup": true
+  }
+}
