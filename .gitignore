@@ -1,0 +1,14 @@
+# Runtime state (generated during pipeline execution)
+.claude-workflow/state/
+.claude-workflow/handoffs/
+.claude-workflow/logs/
+
+# OMC state
+.omc/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

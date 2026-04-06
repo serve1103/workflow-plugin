@@ -1,0 +1,20 @@
+{
+  "name": "workflow-plugin",
+  "version": "0.1.0",
+  "description": "Automated development workflow pipeline — context enhancement, review, fix, verify, commit",
+  "author": {
+    "name": "serve1103"
+  },
+  "skills": ["./skills/"],
+  "agents": [
+    "./agents/enhancer.md",
+    "./agents/reviewer-docs.md",
+    "./agents/reviewer-frontend.md",
+    "./agents/reviewer-backend.md",
+    "./agents/reviewer-data.md",
+    "./agents/reviewer-security.md",
+    "./agents/fixer.md",
+    "./agents/verifier.md",
+    "./agents/committer.md"
+  ]
+}
