@@ -6,6 +6,8 @@
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://code.claude.com)
 [![Tests](https://img.shields.io/badge/Tests-100%20passed-brightgreen)]()
 
+**English** | [한국어](README.ko.md)
+
 ---
 
 ## Overview
