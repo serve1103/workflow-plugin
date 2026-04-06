@@ -1,7 +1,5 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "workflow-plugin",
-  "description": "Automated end-to-end development pipeline — review, fix, verify, commit",
   "owner": {
     "name": "serve1103"
   },
@@ -28,6 +26,5 @@
         "human-in-the-loop"
       ]
     }
-  ],
-  "version": "0.1.0"
+  ]
 }
