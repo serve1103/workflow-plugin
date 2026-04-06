@@ -2,19 +2,21 @@
 
 ## 목표
 **입력부터 커밋까지** 전체 개발 흐름을 자동화하는 Claude Code 플러그인.
-컨텍스트 보강 → 작업 수행 → 리뷰 → 수정 → 검증 → 커밋의 엔드투엔드 파이프라인.
+컨텍스트 보강 → 작업 수행 → 리뷰 → 사용자 확인 → 수정 → 검증 → 커밋의 엔드투엔드 파이프라인.
 어떤 프로젝트에서든 `claude plugin install`로 설치하면 즉시 동작하는 범용 플러그인.
 
 ## 설계 원칙
 
 | 원칙 | 근거 | 적용 |
 |------|------|------|
-| **훅은 트리거, 스킬이 오케스트레이션** | OMC 패턴: 훅은 경량 감지/주입만, 실제 로직은 스킬이 담당 | 훅 스크립트는 3초 이내, 복잡한 흐름은 `/flow` 스킬에서 |
-| **Writer/Reviewer 컨텍스트 분리** | Claude Code 공식 BP: 작성과 리뷰를 별도 컨텍스트에서 | 모든 에이전트를 서브에이전트로 실행 (격리된 컨텍스트) |
-| **결정론적 검사 > 주관적 판단** | Anthropic 공식: 객관적 신호에 의존 | Verify는 도구 실행 결과로만 판단, Review는 에이전트 분석 |
-| **에이전트 권한 물리적 제한** | OMC disallowedTools 패턴 | 리뷰어는 Write/Edit 차단, 커미터는 git만 허용 |
-| **변경 규모에 비례하는 파이프라인** | Anthropic 공식: 단순성 우선 | 3줄 이하 변경은 리뷰만, 대규모 변경은 풀 파이프라인 |
-| **롤백 우선** | 바이브코딩 BP: 되돌리기 능력 확보 | 파이프라인 시작 전 git stash/branch로 체크포인트 |
+| **훅은 트리거, 스킬이 오케스트레이션** | OMC 패턴 | 훅 스크립트는 3초 이내, 복잡한 흐름은 `/flow` 스킬에서 |
+| **Writer/Reviewer 컨텍스트 분리** | Claude Code 공식 BP | 모든 에이전트를 서브에이전트로 실행 (격리된 컨텍스트) |
+| **결정론적 검사 > 주관적 판단** | Anthropic 공식 BP | Verify는 도구 실행 결과로만 판단, Review는 에이전트 분석 |
+| **에이전트 권한은 tools 허용 목록으로 제한** | 실제 플러그인 API | `tools: [Read, Grep, Glob]`으로 허용 도구만 명시. 목록에 없는 도구는 자동 차단 |
+| **Human-in-the-Loop** | 에이전틱 코딩 BP | 리뷰 결과 확인, 대규모 변경 승인 등 핵심 지점에서 사용자 판단 |
+| **변경 규모에 비례하는 파이프라인** | Anthropic: 단순성 우선 | 3줄 이하 변경은 리뷰만, 대규모 변경은 풀 파이프라인 |
+| **롤백 우선** | 바이브코딩 BP | 파이프라인 시작 전 git stash/branch로 체크포인트 |
+| **결정론적 로직은 코드로, 오케스트레이션은 LLM으로** | 비판적 검토 결과 | 프리셋 판단/리뷰어 선택은 Node.js, 에이전트 호출은 SKILL.md |
 
 ## 핵심 컨셉
 
@@ -47,14 +49,30 @@
 [Phase 2: Post-Work — 작업 후]
     [체크포인트] git stash 또는 브랜치 생성 (롤백 지점)
         ↓
-    [리뷰] 병렬 리뷰어 에이전트 × N → 이슈 합산, 신뢰도 필터링
+    [리뷰] 도메인별 리뷰어 자동 선택 → 병렬 실행 → 결과 합산
         ↓
-    [수정] HIGH~MEDIUM 이슈 자동 수정 (동일 에러 3회 → 중단)
+    [사용자 확인] ★ 리뷰 결과 보고 → 사용자가 진행 방식 결정
+        ↓ (사용자 선택에 따라)
+    [수정] 사용자가 승인한 이슈만 자동 수정 (동일 에러 3회 → 중단)
         ↓
     [검증] 린트, 타입체크, 빌드, 테스트 (결정론적 도구 실행)
         ↓
     [커밋] 변경 요약 리포트 + 커밋 메시지 생성 + 커밋
 ```
+
+### Human-in-the-Loop 확인 지점
+
+파이프라인은 자동이지만, 핵심 지점에서 사용자 판단을 요청.
+
+| 확인 지점 | 트리거 조건 | 사용자 선택지 |
+|-----------|-------------|--------------|
+| **리뷰 후 확인** | 항상 (이슈 0건이면 스킵) | `proceed` (전체 자동 수정) / `select` (이슈 선택 수정) / `skip` (수정 없이 커밋) / `abort` (중단) |
+| **CRITICAL 이슈** | CRITICAL 등급 발견 시 | 파이프라인 즉시 중단, 사용자가 직접 판단 |
+| **대규모 변경** | 10+ 파일 또는 삭제 포함 | 커밋 전 사용자 확인 |
+| **Circuit Breaker** | 동일 에러 3회 반복 | 진단 보고서 제공, 사용자가 판단 |
+| **검증 실패 2회** | Verify→Fix 루프 2회 실패 | 사용자에게 보고, 롤백 또는 수동 수정 |
+
+**자동 모드 (`review.autoMode: true`)**: 이슈가 모두 HIGH/MEDIUM이고 신뢰도 80+ 이면 사용자 확인 없이 자동 진행. CRITICAL은 자동 모드에서도 항상 중단.
 
 ### 트리거 방식
 
@@ -69,14 +87,15 @@
 ### 워크플로우 프리셋
 
 변경 유형에 따라 최적의 파이프라인을 자동 선택. (ECC orchestrate 패턴)
+**프리셋 판단은 `lib/orchestrator.mjs`에서 결정론적으로 수행** (LLM 판단에 의존하지 않음).
 
 | 프리셋 | Post-Work 파이프라인 | 자동 감지 조건 |
 |--------|---------------------|---------------|
-| **feature** | review → fix → verify → commit | 기본값 |
-| **bugfix** | review → fix → verify → commit | 커밋 메시지에 "fix" 포함 |
-| **refactor** | review → verify → commit | 파일 구조 변경, import 변경 |
+| **feature** | review → confirm → fix → verify → commit | 기본값 |
+| **bugfix** | review → confirm → fix → verify → commit | 변경 파일이 기존 코드 수정만 |
+| **refactor** | review → confirm → verify → commit | 파일 구조 변경, import 변경 |
 | **docs** | review → commit | `docs/**`, `*.md` 변경만 |
-| **security** | security-scan → review → fix → verify → commit | 인증/인가/암호화 관련 파일 |
+| **security** | review → confirm → fix → verify → commit | 인증/인가/암호화 관련 파일 |
 | **custom** | config.json에서 직접 정의 | 사용자 설정 |
 
 ### 변경 규모에 따른 파이프라인 스케일링
@@ -84,9 +103,9 @@
 | 변경 규모 | 기준 | 파이프라인 |
 |-----------|------|-----------|
 | **trivial** | 변경 3줄 이하 | review만 (요약 코멘트) |
-| **small** | 변경 1~3 파일 | review → verify → commit |
+| **small** | 변경 1~3 파일 | review → confirm → verify → commit |
 | **normal** | 변경 4~10 파일 | 프리셋에 따른 풀 파이프라인 |
-| **large** | 변경 10+ 파일 또는 삭제 포함 | 풀 파이프라인 + 사용자 확인 게이트 |
+| **large** | 변경 10+ 파일 또는 삭제 포함 | 풀 파이프라인 + 커밋 전 사용자 확인 게이트 |
 
 ### 파이프라인은 모듈형
 파이프라인은 **스테이지**의 조합. 프로젝트에 맞게 스테이지를 추가/제거/순서변경 가능.
@@ -99,14 +118,13 @@ pre:
   enhance: true         # (B) /flow enhance 스킬 활성화
 
 # Phase 2: Post-Work 파이프라인
-post: [review, fix, verify, commit]
+post: [review, confirm, fix, verify, commit]
 
 # 엄격 모드 (리뷰 2회)
-post: [review, fix, verify, review, commit]
+post: [review, confirm, fix, verify, review, confirm, commit]
 
-# Phase 1만 사용 (보강만, 뒷처리 수동)
-pre: { autoContext: true, enhance: true }
-post: []
+# 수동 수정 모드 (자동 수정 없이 리뷰+검증만)
+post: [review, confirm, verify, commit]
 ```
 
 ## 프로젝트 구조 자동 감지
@@ -178,13 +196,13 @@ post: []
 | **auto** | 자동 강화 후 바로 실행 (승인 단계 생략) |
 | **suggest** | 강화 제안만 보여주고 사용자가 직접 수정/실행 |
 
-### 1. Review (리뷰) — Phase 2
+### 1. Review (리뷰 허브) — Phase 2
 
 변경 내용에 따라 **적절한 리뷰어 조합을 자동 선택**하여 병렬 실행 후 결과 합산.
-변경된 파일 경로 + 프로젝트 감지 결과로 어떤 리뷰어를 활성화할지 판단.
+리뷰어 선택은 `lib/orchestrator.mjs`가 결정론적으로 수행.
 
-**입력:** 변경된 파일 목록 + diff (스킬에서 `!git diff --cached!` 런타임 주입)
-**출력:** `.claude-workflow/state/review.json`
+**입력:** SKILL.md가 Bash로 `git diff --cached`를 실행하여 결과를 에이전트에 전달
+**출력:** 오케스트레이터가 에이전트 응답을 `.claude-workflow/state/review.json`에 기록
 **Handoff:** `.claude-workflow/handoffs/review.md` — 결정/거부안/리스크 기록
 
 #### 리뷰어 종류
@@ -196,7 +214,7 @@ post: []
 | haiku | 문법, 오탈자, 일관성 |
 | | 누락된 내용, 오래된 정보 |
 | | 코드 예시와 실제 코드의 불일치 |
-| | API 문서와 실제 인��페이스 정합성 |
+| | API 문서와 실제 인터페이스 정합성 |
 
 **코드 리뷰어 — 프론트엔드** — `src/components/`, `*.tsx`, `*.css`, `*.vue` 등
 
@@ -237,15 +255,16 @@ post: []
 
 #### 리뷰어 자동 선택 로직
 
+`lib/orchestrator.mjs`가 변경된 파일 경로를 분석하여 결정론적으로 리뷰어를 선택:
+
 ```
-변경된 파일 경로를 분석:
-  docs/**, *.md           → 문서 리뷰어 활성화
-  *.tsx, *.vue, *.css     → 프론트엔드 리뷰어 활성화
-  src/api/**, routes/**   → 백엔드 리뷰어 활성화
-  migrations/**, *.sql    → DA 리뷰어 활성화
-  auth/**, crypto/**      → 보안 리뷰어 활성화
-  여러 영역에 걸침         → 해당하는 리뷰어 모두 병렬 실행
-  판단 불가                → 백엔드 리뷰어 (기본값)
+docs/**, *.md           → 문서 리뷰어 활성화
+*.tsx, *.vue, *.css     → 프론트엔드 리뷰어 활성화
+src/api/**, routes/**   → 백엔드 리뷰어 활성화
+migrations/**, *.sql    → DA 리뷰어 활성화
+auth/**, crypto/**      → 보안 리뷰어 활성화
+여러 영역에 걸침         → 해당하는 리뷰어 모두 병렬 실행
+판단 불가                → 백엔드 리뷰어 (기본값)
 ```
 
 config.json의 `review.reviewerMapping`으로 경로-리뷰어 매핑 커스터마이즈 가능.
@@ -254,7 +273,6 @@ trivial 변경(3줄 이하)은 리뷰어 1개만 실행 (sonnet, 통합 리뷰).
 #### 리뷰어별 검증 기준 문서
 
 각 리뷰어는 **"무엇이 이슈이고 무엇이 아닌지"를 판단하는 기준 문서**를 참조.
-기준 문서가 없으면 매번 다른 기준으로 판단하여 일관성이 깨짐.
 
 **2단계 기준 참조:**
 1. **프로젝트 기준** (우선) — `.claude-workflow/standards/`에 있으면 이것을 따름
@@ -263,46 +281,14 @@ trivial 변경(3줄 이하)은 리뷰어 1개만 실행 (sonnet, 통합 리뷰).
 **프로젝트 기준 문서 구조:**
 ```
 .claude-workflow/standards/
-├── docs.md          ← 문서 리뷰 기준 (용어 통일, 마크다운 규칙 등)
-├── frontend.md      ← 프론트엔드 기준 (컴포넌트 패턴, 접근성 WCAG 2.1 AA 등)
-├── backend.md       ← 백엔드 기준 (API 응답 형식, 에러 코드 체계, DB 규칙 등)
-├── data.md          ← DA/데이터 기준 (마이그레이션 롤백 필수, 인덱싱 규칙 등)
-└── security.md      ← 보안 기준 (OWASP Top 10, PCI DSS, 암호화 정책 등)
+├── docs.md          ← 문서 리뷰 기준
+├── frontend.md      ← 프론트엔드 기준
+├── backend.md       ← 백엔드 기준
+├── data.md          ← DA/데이터 기준
+└── security.md      ← 보안 기준
 ```
 
-**플러그인 내장 기준 위치:**
-```
-workflow-plugin/
-├── standards/
-│   ├── docs.md
-│   ├── frontend.md
-│   ├── backend.md
-│   ├── data.md
-│   └── security.md
-```
-
-내장 기준은 업계 표준 베스트 프랙티스 기반.
 프로젝트 기준이 존재하면 내장 기준을 완전히 대체 (merge가 아닌 override).
-
-**기준 문서 예시 (backend.md 일부):**
-```markdown
-# 백엔드 코드 리뷰 기준
-
-## API 설계
-- REST 엔드포인트는 복수형 명사 사용 (/users, /orders)
-- 에러 응답에 내부 구현 세부사항(스택 트레이스) 노출 금지
-- 모든 API는 적절한 HTTP 상태 코드 반환 (200/201/400/401/403/404/500)
-
-## DB 쿼리
-- 루프 내 DB 쿼리 금지 (N+1 문제) → 배치/조인으로 처리
-- 트랜잭션 범위를 최소화하되 데이터 정합성 보장
-- 인덱스 없는 WHERE 절 사용 시 경고
-
-## 에러 처리
-- 빈 catch 블록 금지 — 최소한 로깅 필수
-- 비동기 함수의 에러는 반드시 처리 (미처리 Promise rejection 금지)
-- 외부 서비스 호출 시 타임아웃 + 재시도 + 서킷브레이커 고려
-```
 
 리뷰어는 이슈 보고 시 **어떤 기준을 근거로 판단했는지** 출력에 포함:
 ```json
@@ -310,6 +296,7 @@ workflow-plugin/
   "file": "src/api/users.ts",
   "line": 42,
   "severity": "HIGH",
+  "confidence": 92,
   "message": "루프 내 DB 쿼리 (N+1)",
   "standardRef": "backend.md#db-쿼리",
   "suggestedFix": "Promise.all + batch query로 변경"
@@ -332,12 +319,14 @@ workflow-plugin/
 
 | 등급 | 의미 | 처리 |
 |------|------|------|
-| CRITICAL | 보안 취약점, 데이터 손실 위험 | 파이프라인 중단, 사용자 확인 요청 |
-| HIGH | 버그, 타입 오류 | 신뢰도 80+ 만 자동 수정 |
-| MEDIUM | 코드 스멜, 경미한 이슈 | 신뢰도 80+ 만 자동 수정 |
+| CRITICAL | 보안 취약점, 데이터 손실 위험 | 파이프라인 즉시 중단, 사용자 확인 |
+| HIGH | 버그, 타입 오류 | 사용자 확인 후 자동 수정 |
+| MEDIUM | 코드 스멜, 경미한 이슈 | 사용자 확인 후 자동 수정 |
 | LOW | 스타일, 제안 사항 | 커밋 메시지에 메모만 |
 
 각 이슈에 0-100 신뢰도 점수 부여. **80 미만은 자동 필터링** (공식 code-review 패턴).
+
+**리뷰어 결과 중복 해결:** 여러 리뷰어가 같은 파일/라인에 이슈를 보고하면 더 높은 severity를 채택하고 하나로 합산.
 
 **출력 스키마:**
 ```json
@@ -351,6 +340,7 @@ workflow-plugin/
       "category": "에러 처리",
       "message": "catch 블록에서 에러를 무시하고 있음",
       "suggestedFix": "에러 로깅 추가 또는 상위로 전파",
+      "standardRef": "backend.md#에러-처리",
       "source": "backend-reviewer"
     }
   ],
@@ -360,12 +350,42 @@ workflow-plugin/
 }
 ```
 
-### 2. Fix (수정) — Phase 2
+### 1.5. Confirm (사용자 확인) — Phase 2
 
-리뷰에서 발견된 HIGH~MEDIUM 이슈를 자동 수정.
+리뷰 결과를 사용자에게 보고하고 진행 방식을 결정받는다.
 
 **입력:** `.claude-workflow/state/review.json`
-**출력:** `.claude-workflow/state/fix.json`
+**출력:** 사용자 선택 (proceed / select / skip / abort)
+
+**사용자에게 표시:**
+```
+## 리뷰 결과 요약
+- 활성화된 리뷰어: 백엔드, 보안
+- 발견된 이슈: HIGH 2건, MEDIUM 1건, LOW 3건
+- 필터링된 이슈: 5건 (신뢰도 80 미만)
+
+### HIGH 이슈
+1. [src/auth/login.ts:42] catch 블록에서 에러 무시 (confidence: 92)
+2. [src/api/users.ts:15] N+1 쿼리 (confidence: 88)
+
+### MEDIUM 이슈
+1. [src/utils/date.ts:7] 매직 넘버 사용 (confidence: 85)
+
+어떻게 진행할까요?
+- proceed: 모든 HIGH/MEDIUM 이슈 자동 수정
+- select: 수정할 이슈 선택
+- skip: 수정 없이 검증+커밋 진행
+- abort: 파이프라인 중단
+```
+
+**이슈 0건일 경우:** confirm 스킵, 바로 Verify → Commit 진행.
+
+### 2. Fix (수정) — Phase 2
+
+사용자가 승인한 이슈를 자동 수정.
+
+**입력:** `.claude-workflow/state/review.json` + 사용자 선택
+**출력:** 오케스트레이터가 `.claude-workflow/state/fix.json`에 기록
 **Handoff:** `.claude-workflow/handoffs/fix.md`
 
 **수정 루프:**
@@ -422,7 +442,9 @@ workflow-plugin/
 
 ## 상태 전달
 
-에이전트 간 데이터 전달은 **파일 기반 상태 + Handoff 문서** 2트랙. (OMC team 패턴)
+### 설계 원칙
+- **에이전트는 상태 파일을 직접 쓰지 않는다.** 에이전트는 구조화된 응답을 반환하고, SKILL.md(오케스트레이터)가 응답을 파싱하여 state/*.json에 기록.
+- 이렇게 하면 리뷰어에 Write 도구를 줄 필요가 없고, 스키마 검증도 오케스트레이터에서 일괄 수행 가능.
 
 ### 상태 파일 (구조화된 데이터)
 
@@ -445,11 +467,11 @@ workflow-plugin/
 ```
 
 Handoff 문서는 "다음 에이전트가 동일한 실수를 반복하지 않도록" 결정/거부안/리스크를 기록.
-컨텍스트 컴팩션이 발생해도 Handoff 파일로 맥락이 보존됨. (OMC team 패턴)
+컨텍스트 컴팩션이 발생해도 Handoff 파일로 맥락이 보존됨.
 
 ### 이전 산출물 존재 시 스킵 (Resume)
 
-파이프라인 중단 후 재개 시, 각 스테이지의 output 파일 존재 여부를 확인하여 완료된 스테이지를 건너뜀. (OMC autopilot 패턴)
+파이프라인 중단 후 재개 시, 각 스테이지의 output 파일 존재 여부를 확인하여 완료된 스테이지를 건너뜀.
 
 ## 롤백 메커니즘
 
@@ -484,6 +506,7 @@ git checkout -b workflow-backup-{timestamp}
 - 에이전트별 모델 및 토큰 사용량
 - 발견된 이슈 수, 수정된 이슈 수
 - 검증 pass/fail 결과
+- 사용자 확인 지점에서의 선택
 - 파이프라인 성공/실패/중단 여부
 
 `/flow status` — 현재 실행 상태 + 최근 실행 히스토리 요약.
@@ -500,39 +523,40 @@ git checkout -b workflow-backup-{timestamp}
 | **백엔드 리뷰어** | sonnet | Phase 2 | Review | `src/api/**`, `routes/**` 변경 시 (기본값) |
 | **DA 리뷰어** | sonnet | Phase 2 | Review | `migrations/**`, `*.sql` 변경 시 |
 | **보안 리뷰어** | sonnet | Phase 2 | Review | 인증/인가 관련 또는 security 프리셋 |
-| **픽서** | sonnet | Phase 2 | Fix | 항상 |
+| **픽서** | sonnet | Phase 2 | Fix | 사용자가 수정 승인 시 |
 | **검증자** | haiku | Phase 2 | Verify | 항상 |
 | **커미터** | haiku | Phase 2 | Commit | 항상 |
 
 검증자와 커미터는 haiku — 도구 실행 결과 판단/커밋 메시지 생성은 경량 작업.
 리뷰어는 변경 파일에 따라 필요한 것만 활성화 — 불필요한 리뷰어를 돌리지 않음.
 
-### 에이전트 권한 분리 (disallowedTools)
+### 에이전트 권한 제한 (tools 허용 목록)
+
+Claude Code 에이전트 프론트매터에서는 `tools:` 필드로 허용 도구만 명시.
+목록에 없는 도구는 자동으로 차단된다.
 
 ```yaml
 # enhancer.md — 읽기 + 탐색만
-tools: Glob, Grep, Read, WebFetch, WebSearch
-disallowedTools: Write, Edit, Bash
+tools: [Glob, Grep, Read, WebFetch, WebSearch]
 
-# reviewer-*.md (전 리뷰어 공통) — 읽기 + 분석만 (코드 수정 물리적 차단)
-tools: Glob, Grep, Read
-disallowedTools: Write, Edit, Bash
+# reviewer-*.md (전 리뷰어 공통) — 읽기 + 분석만
+tools: [Glob, Grep, Read]
 
 # fixer.md — 읽기 + 쓰기 (수정 전담)
-tools: Glob, Grep, Read, Write, Edit, Bash
+tools: [Glob, Grep, Read, Write, Edit, Bash]
 
-# verifier.md — 도구 실행만 (코드 수정 차단)
-tools: Glob, Grep, Read, Bash
-disallowedTools: Write, Edit
+# verifier.md — 도구 실행만 (코드 수정 불가)
+tools: [Glob, Grep, Read, Bash]
 
-# committer.md — git 명령만
-allowed-tools: Bash(git:*), Bash(gh:*)
-disallowedTools: Write, Edit
+# committer.md — 도구 실행만 (프롬프트에서 git 명령만 사용하도록 지시)
+tools: [Glob, Grep, Read, Bash]
 ```
+
+**참고:** `Bash(git:*)` 같은 세분화된 Bash 제한은 skill/command 전용 문법이므로 에이전트에서는 사용 불가. 커미터의 git-only 제약은 프롬프트 지시로 강제하고, tools에는 Bash를 허용.
 
 ### 에이전트 Failure Modes (각 에이전트에 명시)
 
-모든 에이전트 마크다운에 "이 함정에 빠지지 말 것" 섹션 포함. (OMC 패턴)
+모든 에이전트 마크다운에 "이 함정에 빠지지 말 것" 섹션 포함.
 
 **리뷰어 Failure Modes:**
 - "Compiles-therefore-correct": 빌드 성공 ≠ 올바른 코드
@@ -566,19 +590,21 @@ disallowedTools: Write, Edit
 | `/flow status` | — | 현재 파이프라인 진행 상태 + 최근 실행 히스토리 |
 | `/flow config` | — | 설정 대화형 수정 |
 
-`/flow` 스킬의 오케스트레이션 로직 (`!`backtick`!` 런타임 주입 활용):
-```
-/flow 실행 시:
-  1. `!git diff --stat!`로 변경 규모 판단 → 파이프라인 스케일링
-  2. `!cat .claude-workflow/config.json!`로 설정 로드
-  3. 프리셋 자동 선택 (또는 사용자 지정)
-  4. 롤백 체크포인트 생성
-  5. 각 스테이지에 해당하는 에이전트를 서브에이전트로 순차 호출
-  6. 에이전트 결과를 state/*.json + handoffs/*.md에 기록
-  7. CRITICAL 이슈 또는 Circuit Breaker 발동 시 중단 + 사용자 보고
-  8. 모든 스테이지 완료 시 변경 요약 리포트 출력
-  9. 실행 로그 기록
-```
+### `/flow` 오케스트레이션 구조
+
+**결정론적 로직 (lib/orchestrator.mjs):**
+- 변경 규모 판단 (git diff --stat 파싱)
+- 프리셋 자동 선택 (파일 경로 패턴 매칭)
+- 리뷰어 자동 선택 (config.json의 reviewerMapping)
+- 리뷰어 결과 중복 해결 (같은 파일/라인 → 높은 severity 채택)
+- state/*.json 스키마 검증
+
+**LLM 오케스트레이션 (skills/flow/SKILL.md):**
+- orchestrator.mjs 결과를 읽어 에이전트 호출 결정
+- 에이전트를 서브에이전트로 순차/병렬 호출
+- 에이전트 응답을 받아 state/*.json + handoffs/*.md에 기록
+- 사용자 확인 지점에서 선택지 제시 및 응답 처리
+- CRITICAL / Circuit Breaker / 검증 실패 시 중단 + 보고
 
 ## 훅 연결
 
@@ -598,7 +624,7 @@ disallowedTools: Write, Edit
       ]
     }],
     "PreToolUse": [{
-      "matcher": "Bash(git commit:*)",
+      "matcher": "Bash",
       "hooks": [
         { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/lib/commit-guard.mjs", "timeout": 3 }
       ]
@@ -623,9 +649,11 @@ disallowedTools: Write, Edit
 |-----|------|
 | `context-injector.mjs` | Phase 1A: 프롬프트에서 키워드/파일 감지 → system-reminder로 컨텍스트 주입 |
 | `stop-checker.mjs` | Phase 2 트리거: 파일 변경 여부 확인 → 변경 있으면 파이프라인 실행 제안 |
-| `commit-guard.mjs` | git commit 직전: 리뷰 미실행 시 경고 |
+| `commit-guard.mjs` | git commit 직전: 스크립트 내부에서 `tool_input.command`가 `git commit`인지 확인 → 리뷰 미실행 시 경고 |
 | `verify-deliverables.mjs` | 서브에이전트 종료 시: 산출물(state/*.json) 존재/유효성 자동 검증 |
 | `session-init.mjs` | 세션 시작: 미커밋 변경 감지 → 파이프라인 실행 제안, config 로드 |
+
+**참고:** `PreToolUse`의 matcher는 `"Bash"`로 설정하고, `commit-guard.mjs` 스크립트 내부에서 `tool_input.command`를 파싱하여 `git commit` 명령인지 확인. (hooks matcher는 도구명 수준만 지원)
 
 **중요**: Phase 1 자동 컨텍스트 보강, Phase 2 자동 트리거 모두 기본 OFF.
 사용자가 `/flow config`에서 명시적으로 켜야 동작.
@@ -653,7 +681,7 @@ disallowedTools: Write, Edit
       "autoContext": false,
       "enhance": true
     },
-    "post": ["review", "fix", "verify", "commit"],
+    "post": ["review", "confirm", "fix", "verify", "commit"],
     "preset": "auto",
     "scaling": {
       "trivialThreshold": 3,
@@ -677,6 +705,7 @@ disallowedTools: Write, Edit
   "review": {
     "parallelReviewers": true,
     "confidenceThreshold": 80,
+    "autoMode": true,
     "maxFixRounds": 3,
     "maxVerifyRetries": 2,
     "circuitBreakerThreshold": 3,
@@ -719,7 +748,7 @@ disallowedTools: Write, Edit
 ```
 workflow-plugin/
 ├── .claude-plugin/
-│   └── plugin.json              ← 플러그인 매니페스트
+│   └── plugin.json              ← 플러그인 매니페스트 (name, agents, skills만)
 ├── agents/
 │   ├── enhancer.md              ← 프롬프트 강화 에이전트 (Phase 1B)
 │   ├── reviewer-docs.md         ← 문서 리뷰어 (haiku)
@@ -732,16 +761,21 @@ workflow-plugin/
 │   └── committer.md             ← 커미터 에이전트 (haiku)
 ├── skills/
 │   └── flow/
-│       └── SKILL.md             ← /flow 스킬 (오케스트레이션 로직 내장)
+│       └── SKILL.md             ← /flow 스킬 (LLM 오케스트레이션)
 ├── hooks/
 │   └── hooks.json               ← 훅 정의
 ├── lib/
+│   ├── orchestrator.mjs         ← 결정론적 로직 (프리셋/스케일링/리뷰어 선택)
+│   ├── state-manager.mjs        ← 상태 파일 읽기/쓰기/검증
+│   ├── schemas.mjs              ← state/*.json 스키마 정의
+│   ├── detect-project.mjs       ← 프로젝트 구조 감지
 │   ├── context-injector.mjs     ← Phase 1A 컨텍스트 주입
 │   ├── stop-checker.mjs         ← Phase 2 변경 감지
 │   ├── commit-guard.mjs         ← git commit 전 리뷰 확인
 │   ├── verify-deliverables.mjs  ← 서브에이전트 산출물 검증
 │   ├── session-init.mjs         ← 세션 초기화
-│   └── detect-project.mjs       ← 프로젝트 구조 감지
+│   ├── rollback.mjs             ← 롤백 체크포인트 관리
+│   └── logger.mjs               ← 실행 로그 기록
 ├── standards/
 │   ├── docs.md                  ← 문서 리뷰 내장 기준
 │   ├── frontend.md              ← 프론트엔드 리뷰 내장 기준
@@ -752,7 +786,8 @@ workflow-plugin/
 │   ├── review-report.md         ← 리뷰 리포트 템플릿
 │   ├── summary-report.md        ← 변경 요약 리포트 템플릿
 │   └── pr-body.md               ← PR 본문 템플릿
-└── README.md
+├── .gitignore                   ← 런타임 파일 제외
+└── README.md                    ← 플러그인 사용 가이드
 ```
 
 ## 확장 포인트
@@ -769,7 +804,7 @@ workflow-plugin/
 
 # config.json에서 사용
 "pipeline": {
-  "post": ["review", "fix", "verify", "doc-gen", "changelog", "commit", "notify"]
+  "post": ["review", "confirm", "fix", "verify", "doc-gen", "changelog", "commit", "notify"]
 }
 ```
 
@@ -779,10 +814,10 @@ workflow-plugin/
 name: doc-gen
 description: 변경된 코드에 대한 문서 자동 생성
 model: sonnet
+tools: [Glob, Grep, Read, Write, Edit]
 inputs: [changed-files, review-report]
 outputs: [doc-gen-result]
 onFailure: skip                          # skip | abort | ask
-disallowedTools: []
 ---
 
 ## Failure Modes
@@ -794,18 +829,29 @@ disallowedTools: []
 
 ## 구현 순서
 
-1. 플러그인 스캐폴딩 + plugin.json
+1. 플러그인 스캐폴딩 + plugin.json + .gitignore + README.md
 2. 프로젝트 구조 자동 감지 (`detect-project.mjs`)
-3. 상태 전달 프로토콜 정의 (state/*.json 스키마 + handoffs/*.md 포맷)
-4. `/flow` 스킬 + 오케스트레이션 로직 (프리셋, 스케일링, 중단/재개/롤백)
-5. Phase 1A: 컨텍스트 주입 훅 (`context-injector.mjs`)
-6. Phase 1B: 인핸서 에이전트 (`enhancer.md`)
-7. 리뷰어 에이전트 × 5 (문서/프론트/백엔드/DA/보안, 자동 선택 + 병렬 실행)
-8. 픽서 에이전트 (`fixer.md` + 수정 루프 + circuit breaker)
-9. 검증자 에이전트 (`verifier.md` + Verify→Fix 루프)
-10. 커미터 에이전트 (`committer.md` + 변경 요약 리포트)
-11. 훅 등록 (stop-checker, commit-guard, verify-deliverables, session-init)
-12. 관측 가능성 (실행 로그, `/flow status`)
-13. 롤백 메커니즘 (`/flow rollback`)
-14. 커스텀 스테이지 로딩
-15. 테스트 (다양한 프로젝트 타입에서 검증)
+3. 상태 전달 프로토콜 정의 (`state-manager.mjs` + `schemas.mjs`)
+4. 결정론적 오케스트레이터 (`orchestrator.mjs` — 프리셋/스케일링/리뷰어 선택)
+5. `/flow` 스킬 + LLM 오케스트레이션 (`SKILL.md` — 에이전트 호출, 사용자 확인, 중단/재개)
+6. Phase 1A: 컨텍스트 주입 훅 (`context-injector.mjs`)
+7. Phase 1B: 인핸서 에이전트 (`enhancer.md`)
+8. 리뷰어 에이전트 × 5 (문서/프론트/백엔드/DA/보안) + standards × 5
+9. 픽서 에이전트 (`fixer.md` + 수정 루프 + circuit breaker)
+10. 검증자 에이전트 (`verifier.md` + Verify→Fix 루프)
+11. 커미터 에이전트 (`committer.md` + 변경 요약 리포트 + 템플릿)
+12. 훅 등록 (hooks.json + stop-checker, commit-guard, verify-deliverables, session-init)
+13. 관측 가능성 (`logger.mjs` + `/flow status`)
+14. 롤백 메커니즘 (`rollback.mjs` + `/flow rollback`)
+15. 커스텀 스테이지 로딩
+16. 통합 테스트 (다양한 프로젝트 타입에서 검증)
+
+### MVP 범위
+
+Step 1 + 2 + 3 + 4 + 5 + 8(백엔드 리뷰어만) + 9(최소 픽서) + 10 + 11
+
+MVP로 달성되는 것:
+- `/flow post` → 리뷰 → **사용자 확인** → 수정 → 검증 → 커밋
+- 사용자가 리뷰 결과를 보고 proceed/select/skip/abort 선택 가능
+- 최소 픽서로 승인된 이슈 자동 수정
+- 백엔드 리뷰어 + 내장 기준으로 기본 리뷰

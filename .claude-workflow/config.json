@@ -47,7 +47,7 @@
   "review": {
     "parallelReviewers": true,
     "confidenceThreshold": 80,
-    "autoMode": false,
+    "autoMode": true,
     "maxFixRounds": 3,
     "maxVerifyRetries": 2,
     "circuitBreakerThreshold": 3,
