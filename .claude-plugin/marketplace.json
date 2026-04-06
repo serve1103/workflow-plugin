@@ -3,6 +3,9 @@
   "owner": {
     "name": "serve1103"
   },
+  "metadata": {
+    "description": "Automated end-to-end development pipeline — review, fix, verify, commit"
+  },
   "plugins": [
     {
       "name": "workflow-plugin",
