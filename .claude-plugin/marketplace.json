@@ -10,7 +10,7 @@
     {
       "name": "workflow-plugin",
       "description": "Automated end-to-end development pipeline for Claude Code — from prompt to commit. 5 domain reviewers, Human-in-the-Loop, pipeline scaling, rollback.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "serve1103"
       },
