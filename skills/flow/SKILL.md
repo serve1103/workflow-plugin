@@ -23,6 +23,7 @@ Parse `$ARGUMENTS` to determine which subcommand to run:
 | `rollback` | Restore to last checkpoint |
 | `status` | Show pipeline status + recent history |
 | `config` | Interactive config editing |
+| `learn` | Review and approve/reject learned patterns as review standards |
 
 ## Phase 2: Post-Work Pipeline (`/flow` or `/flow post`)
 
@@ -140,7 +141,7 @@ If the user chose `proceed` or `select`:
 - If verify fails, launch fixer to fix the failures
 - If still failing after max retries, stop pipeline and report to user
 
-### Step 7: Commit
+### Step 7: Commit + Push + PR
 
 If verify passed (or user chose `skip` at confirm):
 
@@ -152,7 +153,21 @@ If verify passed (or user chose `skip` at confirm):
 3. It will generate a summary report and commit message, then commit
 4. Write `.claude-workflow/state/commit.json`
 5. Clean up rollback checkpoint: `git stash drop` (if `rollback.autoCleanup` is true)
-6. Present the summary report to the user
+
+**Push** (if `commit.autoPush` is true):
+6. Run `git push` to push the commit to remote
+
+**PR** (if `commit.autoCreatePR` is `"confirm"` or `true`):
+7. Generate PR body from: review results + change summary + verification results (use `templates/pr-body.md`)
+8. If `autoCreatePR` is `"confirm"`:
+   - Present the PR title and body to the user
+   - Ask: "이 내용으로 PR 생성할까요?" → **approve** / **edit** / **cancel**
+   - Wait for user response
+   - If approve: create PR via `gh pr create` (or `glab`/`bitbucket` based on platform)
+   - If edit: let user modify, then create
+   - If cancel: skip PR (commit and push already done)
+9. If `autoCreatePR` is `true`: create PR immediately without asking
+10. Present the summary report + PR URL to the user
 
 ### Pipeline Complete
 
@@ -164,6 +179,8 @@ Show final summary:
 - Issues: {found} found → {fixed} fixed → {remaining} remaining
 - Verification: {pass/fail}
 - Commit: {hash} — {message}
+- Push: {success/skipped}
+- PR: {url/skipped/cancelled}
 ```
 
 ## Phase 1B: Enhance (`/flow enhance <prompt>`)
@@ -195,6 +212,34 @@ Run the individual stage only, following the same logic as above but without the
 ## `/flow config`
 
 Interactive editing of `.claude-workflow/config.json`. Ask the user what they want to change and update accordingly.
+
+## `/flow learn`
+
+Review learned patterns and approve/reject them as review standards.
+
+1. Run `node ${CLAUDE_PLUGIN_ROOT}/lib/pattern-tracker.mjs candidates` to get candidate patterns
+2. If no candidates, check suggestions: `node ${CLAUDE_PLUGIN_ROOT}/lib/pattern-tracker.mjs status`
+3. Present each candidate to the user:
+```
+## Learned Pattern Candidates
+
+1. **Error Handling — Empty catch block**
+   - Found: 7 times | Accepted: 5 (71%) | Fix success: 4 (80%)
+   - Confidence: 0.71
+   - Example: src/api/users.ts:42 — catch block ignores error
+   → approve / reject / skip
+```
+4. For each user choice:
+   - **approve**: Pattern is added to `.claude-workflow/standards/learned.md`
+   - **reject**: Pattern is deleted from storage
+   - **skip**: Pattern stays for future review
+5. After processing, run cleanup: `node ${CLAUDE_PLUGIN_ROOT}/lib/pattern-tracker.mjs clean`
+
+### Pattern Recording (integrated into pipeline)
+
+After **Review** stage: record each discovered issue via pattern-tracker.
+After **Confirm** stage: record user response (accepted for proceed/select, rejected for skip).
+After **Fix** stage: record fix results (success if issue resolved, failed if same error persists).
 
 ## Important Rules
 

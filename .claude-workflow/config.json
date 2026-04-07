@@ -84,8 +84,8 @@
   "commit": {
     "style": "conventional",
     "generateSummaryReport": true,
-    "autoPush": false,
-    "autoCreatePR": false
+    "autoPush": true,
+    "autoCreatePR": "confirm"
   },
   "rollback": {
     "strategy": "stash",
