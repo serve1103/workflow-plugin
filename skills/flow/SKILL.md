@@ -141,7 +141,7 @@ If the user chose `proceed` or `select`:
 - If verify fails, launch fixer to fix the failures
 - If still failing after max retries, stop pipeline and report to user
 
-### Step 7: Commit
+### Step 7: Commit + Push + PR
 
 If verify passed (or user chose `skip` at confirm):
 
@@ -153,7 +153,21 @@ If verify passed (or user chose `skip` at confirm):
 3. It will generate a summary report and commit message, then commit
 4. Write `.claude-workflow/state/commit.json`
 5. Clean up rollback checkpoint: `git stash drop` (if `rollback.autoCleanup` is true)
-6. Present the summary report to the user
+
+**Push** (if `commit.autoPush` is true):
+6. Run `git push` to push the commit to remote
+
+**PR** (if `commit.autoCreatePR` is `"confirm"` or `true`):
+7. Generate PR body from: review results + change summary + verification results (use `templates/pr-body.md`)
+8. If `autoCreatePR` is `"confirm"`:
+   - Present the PR title and body to the user
+   - Ask: "이 내용으로 PR 생성할까요?" → **approve** / **edit** / **cancel**
+   - Wait for user response
+   - If approve: create PR via `gh pr create` (or `glab`/`bitbucket` based on platform)
+   - If edit: let user modify, then create
+   - If cancel: skip PR (commit and push already done)
+9. If `autoCreatePR` is `true`: create PR immediately without asking
+10. Present the summary report + PR URL to the user
 
 ### Pipeline Complete
 
@@ -165,6 +179,8 @@ Show final summary:
 - Issues: {found} found → {fixed} fixed → {remaining} remaining
 - Verification: {pass/fail}
 - Commit: {hash} — {message}
+- Push: {success/skipped}
+- PR: {url/skipped/cancelled}
 ```
 
 ## Phase 1B: Enhance (`/flow enhance <prompt>`)

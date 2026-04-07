@@ -71,10 +71,18 @@ body with details
 Co-Authored-By: workflow-plugin <noreply@workflow-plugin>"
 ```
 
-### 5. Optional: Push / PR
-Only if configured (`commit.autoPush` or `commit.autoCreatePR`):
-- Push: `git push`
-- PR: `gh pr create --title "..." --body "..."`
+### 5. Push
+If `commit.autoPush` is true:
+```bash
+git push
+```
+
+### 6. PR Preparation
+If `commit.autoCreatePR` is `"confirm"` or `true`:
+- Generate PR title from the commit message
+- Generate PR body using review results + change summary + verification results
+- Include: Summary, Changes list, Review results, Verification table
+- Return the PR title and body in the output for the orchestrator to handle user confirmation
 
 ## Output Format
 
@@ -85,7 +93,12 @@ Respond with ONLY a JSON object:
   "commitHash": "abc1234",
   "message": "fix(api): add error logging to catch blocks",
   "changedFiles": ["src/api/users.ts", "src/services/auth.ts"],
-  "summaryReport": "## Change Summary\n..."
+  "summaryReport": "## Change Summary\n...",
+  "pushed": true,
+  "prReady": {
+    "title": "fix(api): add error logging to catch blocks",
+    "body": "## Summary\n- Added error logging...\n\n## Verification\n| Check | Status |\n..."
+  }
 }
 ```
 

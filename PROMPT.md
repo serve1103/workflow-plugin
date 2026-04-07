@@ -436,9 +436,18 @@ trivial 변경(3줄 이하)은 리뷰어 1개만 실행 (sonnet, 통합 리뷰).
 - 프로젝트에 기존 커밋 스타일이 있으면 그걸 따름
 - 변경 범위가 크면 커밋 분할 여부를 사용자에게 질문 (auto 모드에서는 단일 커밋)
 
-**선택적 후속 동작:**
-- 푸시 (설정에 따라 자동 or 확인 후)
-- PR 생성 (플랫폼 자동 감지: gh/glab/bitbucket)
+**커밋 후 자동 흐름:**
+```
+[커밋] 자동
+    ↓
+[Push] 자동 (autoPush: true)
+    ↓
+[PR 본문 생성] 리뷰 결과 + 변경 요약 + 검증 결과로 PR body 작성
+    ↓
+[사용자 확인] "이 내용으로 PR 생성할까요?" → 승인/수정/취소
+    ↓
+[PR 생성] gh/glab/bitbucket (플랫폼 자동 감지)
+```
 
 ## 상태 전달
 
@@ -848,8 +857,8 @@ tools: [Glob, Grep, Read, Bash]
   "commit": {
     "style": "conventional",
     "generateSummaryReport": true,
-    "autoPush": false,
-    "autoCreatePR": false
+    "autoPush": true,
+    "autoCreatePR": "confirm"
   },
   "rollback": {
     "strategy": "stash",

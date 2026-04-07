@@ -47,7 +47,7 @@
   "review": {
     "parallelReviewers": true,
     "confidenceThreshold": 80,
-    "autoMode": true,
+    "autoMode": false,
     "maxFixRounds": 3,
     "maxVerifyRetries": 2,
     "circuitBreakerThreshold": 3,
@@ -84,8 +84,8 @@
   "commit": {
     "style": "conventional",
     "generateSummaryReport": true,
-    "autoPush": false,
-    "autoCreatePR": false
+    "autoPush": true,
+    "autoCreatePR": "confirm"
   },
   "rollback": {
     "strategy": "stash",
